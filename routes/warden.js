@@ -9,7 +9,7 @@ const PrisonBlock = require('../models/PrisonBlock');
 const Report = require('../models/Report');
 const LeaveRequest = require('../models/LeaveRequest');
 const { sendStaffWelcomeEmail } = require('../services/staffEmailService');
-const { uploadPrisonerPhoto, handleUploadError } = require('../middleware/upload');
+const { uploadPrisonerFiles, handleUploadError } = require('../middleware/upload');
 
 // Middleware to check if user is warden
 const requireWarden = async (req, res, next) => {
@@ -159,19 +159,27 @@ router.get('/dashboard/alerts', requireWarden, async (req, res) => {
 
 // ===== INMATE MANAGEMENT =====
 
-// Get all inmates
+// Get inmates in the warden's assigned blocks only
 router.get('/inmates', requireWarden, async (req, res) => {
   try {
-    const inmates = await Prisoner.find({ status: 'active' })
-      .populate('assignedBlock', 'name blockCode')
+    const assignedBlocks = req.user?.wardenDetails?.assignedBlocks || [];
+
+    const query = { status: 'active' };
+    if (assignedBlocks.length > 0) {
+      query.currentBlock = { $in: assignedBlocks };
+    }
+
+    const inmates = await Prisoner.find(query)
+      .populate('currentBlock', 'name blockCode')
       .sort({ createdAt: -1 });
-    
+
     res.json({ success: true, inmates });
   } catch (error) {
     console.error('Get inmates error:', error);
     res.status(500).json({ msg: 'Server error', error: error.message });
   }
 });
+
 
 // Add new inmate
 router.post('/inmates', requireWarden, async (req, res) => {
@@ -198,6 +206,28 @@ router.post('/inmates', requireWarden, async (req, res) => {
 
 // ===== STAFF MANAGEMENT =====
 
+// Helper to generate next employeeId like S001, S002...
+async function getNextStaffEmployeeId() {
+  const prefix = 'S';
+  const regex = new RegExp(`^${prefix}(\\d{3,})$`);
+  // Find all staff employeeIds that match pattern and compute max
+  const docs = await Details.find({ userRole: 'staff' })
+    .select('roleSpecificDetails.staffDetails.employeeId createdAt')
+    .lean();
+
+  let maxNum = 0;
+  for (const d of docs) {
+    const id = d?.roleSpecificDetails?.staffDetails?.employeeId || '';
+    const m = id.match(regex);
+    if (m) {
+      const n = parseInt(m[1], 10);
+      if (n > maxNum) maxNum = n;
+    }
+  }
+  const nextNum = maxNum + 1;
+  return prefix + String(nextNum).padStart(3, '0');
+}
+
 // Add new staff
 router.post('/staff', requireWarden, async (req, res) => {
   try {
@@ -211,6 +241,9 @@ router.post('/staff', requireWarden, async (req, res) => {
     
     // Generate password
     const generatedPassword = Math.random().toString(36).slice(-8) + Math.random().toString(36).slice(-8).toUpperCase();
+
+    // Generate next employeeId
+    const employeeId = await getNextStaffEmployeeId();
     
     // Create basic user record
     const newUser = new User({
@@ -237,7 +270,7 @@ router.post('/staff', requireWarden, async (req, res) => {
           position,
           department,
           shift,
-          employeeId: `STAFF${Date.now()}`,
+          employeeId,
           joiningDate: new Date()
         }
       },
@@ -391,6 +424,18 @@ router.put('/change-password', requireWarden, async (req, res) => {
 
 // ===== STAFF MANAGEMENT =====
 
+// Get prison blocks (for dropdown)
+router.get('/blocks', requireWarden, async (req, res) => {
+  try {
+    const blocks = await PrisonBlock.find({ isActive: true })
+      .select('name blockCode totalCapacity currentOccupancy')
+    res.json({ success: true, blocks });
+  } catch (error) {
+    console.error('Get blocks error:', error);
+    res.status(500).json({ msg: 'Server error', error: error.message });
+  }
+});
+
 // Create new staff member
 router.post('/create-staff', requireWarden, async (req, res) => {
   try {
@@ -409,10 +454,19 @@ router.post('/create-staff', requireWarden, async (req, res) => {
 
     console.log('🔍 Creating new staff member:', { name, email, employeeId, position, department });
 
-    // Validate required fields
-    if (!name || !email || !phone || !employeeId || !position || !department || !experience || !assignedBlock) {
+    // Validate required fields (employeeId is auto-generated)
+    if (!name || !email || !phone || !position || !department || !experience || !assignedBlock) {
       return res.status(400).json({ msg: 'All required fields must be provided' });
     }
+
+    // Basic email/phone/name validation
+    const emailOk = /.+@.+\..+/.test(email || '');
+    const nameOk = /^[A-Za-z\s]+$/.test(String(name || '').trim());
+    const phoneDigits = String(phone || '').replace(/\D/g, '');
+    if (!emailOk) return res.status(400).json({ msg: 'Invalid email address' });
+    if (!nameOk) return res.status(400).json({ msg: 'Name should contain letters and spaces only' });
+    if (phoneDigits.length !== 10) return res.status(400).json({ msg: 'Phone number must be exactly 10 digits' });
+    if (!/^[6-9]/.test(phoneDigits)) return res.status(400).json({ msg: 'Phone number must start with 6-9' });
 
     // Check if email already exists
     const existingUser = await User.findOne({ email });
@@ -420,22 +474,42 @@ router.post('/create-staff', requireWarden, async (req, res) => {
       return res.status(400).json({ msg: 'Email already exists' });
     }
 
-    // Check if employee ID already exists
-    const existingStaff = await Details.findOne({
-      'roleSpecificDetails.staffDetails.employeeId': employeeId
-    });
-    if (existingStaff) {
-      return res.status(400).json({ msg: 'Employee ID already exists' });
+    // Generate staff employeeId like S001
+    let newEmployeeId = employeeId;
+    try {
+      const last = await Details.find({ 'roleSpecificDetails.staffDetails.employeeId': /^S\d{3,}$/ })
+        .select('roleSpecificDetails.staffDetails.employeeId')
+        .sort({ 'roleSpecificDetails.staffDetails.employeeId': -1 })
+        .limit(1);
+      if (last && last.length > 0) {
+        const match = String(last[0].roleSpecificDetails?.staffDetails?.employeeId || '').match(/S(\d+)/);
+        const nextNum = match ? parseInt(match[1], 10) + 1 : 1;
+        newEmployeeId = `S${String(nextNum).padStart(3, '0')}`;
+      } else {
+        newEmployeeId = 'S001';
+      }
+    } catch (e) {
+      console.warn('Failed to compute next employeeId, defaulting to S001', e);
+      newEmployeeId = 'S001';
     }
 
-    // Generate 8-digit password
+    // Generate secure password: 10 chars mixed
     const generatePassword = () => {
-      const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-      let password = '';
-      for (let i = 0; i < 8; i++) {
-        password += chars.charAt(Math.floor(Math.random() * chars.length));
+      const upper = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+      const lower = 'abcdefghijklmnopqrstuvwxyz';
+      const digits = '0123456789';
+      const symbols = '@$!%*?&';
+      const all = upper + lower + digits + symbols;
+      let p = '';
+      // Ensure at least one of each
+      p += upper[Math.floor(Math.random() * upper.length)];
+      p += lower[Math.floor(Math.random() * lower.length)];
+      p += digits[Math.floor(Math.random() * digits.length)];
+      p += symbols[Math.floor(Math.random() * symbols.length)];
+      for (let i = 4; i < 10; i++) {
+        p += all[Math.floor(Math.random() * all.length)];
       }
-      return password;
+      return p;
     };
 
     const generatedPassword = generatePassword();
@@ -445,7 +519,7 @@ router.post('/create-staff', requireWarden, async (req, res) => {
     const newStaff = new User({
       name,
       email,
-      password: generatedPassword, // Will be hashed automatically by User model pre-save middleware
+      password: generatedPassword, // hashed by User pre-save hook
       role: 'staff',
       authProvider: 'local'
     });
@@ -458,29 +532,17 @@ router.post('/create-staff', requireWarden, async (req, res) => {
       userId: savedStaff._id,
       userEmail: email,
       userRole: 'staff',
-      personalInfo: {
-        fullName: name,
-        // Don't set gender, dateOfBirth, nationality to null - let them be undefined
-        address: {
-          // Don't set address fields to null - let them be undefined
-        }
-      },
-      contactInfo: {
-        primaryPhone: phone
-        // Don't set other fields to null - let them be undefined
-      },
+      personalInfo: { fullName: name },
+      contactInfo: { primaryPhone: phone, email },
       roleSpecificDetails: {
         staffDetails: {
-          employeeId,
+          employeeId: newEmployeeId,
           position,
           department,
-          shift: shift || 'day',
+          shift: (shift || 'day').toLowerCase(),
           experience,
           assignedBlock,
-          joiningDate: joiningDate || new Date(),
-          salary: null,
-          qualifications: [],
-          certifications: []
+          joiningDate: joiningDate || new Date()
         }
       },
       verificationStatus: {
@@ -520,10 +582,10 @@ router.post('/create-staff', requireWarden, async (req, res) => {
         id: savedStaff._id,
         name,
         email,
-        employeeId,
+        employeeId: newEmployeeId,
         position,
         department,
-        generatedPassword // Include in response for display
+        generatedPassword
       }
     });
 
@@ -542,6 +604,7 @@ router.get('/staff', requireWarden, async (req, res) => {
     const staffList = await Details.find({ userRole: 'staff' })
       .populate('userId', 'name email')
       .populate('createdBy', 'name email')
+      .populate('roleSpecificDetails.staffDetails.assignedBlock', 'name blockCode')
       .sort({ createdAt: -1 });
 
     console.log(`📋 Found ${staffList.length} staff members in Details collection`);
@@ -569,11 +632,8 @@ router.get('/staff', requireWarden, async (req, res) => {
         console.log(`📋 roleSpecificDetails:`, details.roleSpecificDetails);
       }
 
-      // The staff details are incorrectly stored, let's extract what we can
+      // Try to read staff-specific details if present
       const staffDetailsData = details?.roleSpecificDetails?.staffDetails || {};
-
-      // Since staffDetails is empty, let's use the basic info we have
-      console.log(`📋 Using basic info for staff: ${staffUser.name}`);
 
       formattedStaff.push({
         id: staffUser._id,
@@ -581,12 +641,12 @@ router.get('/staff', requireWarden, async (req, res) => {
         name: details?.personalInfo?.fullName || staffUser.name || 'Unknown',
         email: staffUser.email || details?.userEmail || 'No email',
         phone: details?.contactInfo?.primaryPhone || 'No phone',
-        employeeId: `STAFF${staffUser._id.toString().slice(-4)}`,
-        position: 'Staff Member',
-        department: 'General',
-        shift: 'Day',
-        experience: 'N/A',
-        assignedBlock: 'General',
+        employeeId: (staffDetailsData.employeeId) || `S${staffUser._id.toString().slice(-3)}`,
+        position: staffDetailsData.position || 'Staff Member',
+        department: staffDetailsData.department || 'General',
+        shift: (staffDetailsData.shift || 'day'),
+        experience: staffDetailsData.experience || 'N/A',
+    assignedBlock: staffDetailsData.assignedBlock || null,
         joiningDate: staffDetailsData.joiningDate || staffUser.createdAt,
         status: 'Active',
         createdAt: staffUser.createdAt,
@@ -605,6 +665,87 @@ router.get('/staff', requireWarden, async (req, res) => {
   } catch (error) {
     console.error('Get staff error:', error);
     res.status(500).json({ msg: 'Server error', error: error.message });
+  }
+});
+
+// Update staff member (targeted updates to avoid casting issues)
+router.put('/staff/:id', requireWarden, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      name,
+      email,
+      phone,
+      position,
+      department,
+      shift,
+      experience,
+      assignedBlock
+    } = req.body;
+
+    // Update User basic info
+    const user = await User.findById(id);
+    if (!user) {
+      return res.status(404).json({ msg: 'Staff user not found' });
+    }
+
+    // Ensure email is unique if changed
+    if (email && email !== user.email) {
+      const exists = await User.findOne({ email });
+      if (exists && exists._id.toString() !== id) {
+        return res.status(400).json({ msg: 'Email already in use by another user' });
+      }
+      user.email = email;
+    }
+    if (name) user.name = name;
+    await user.save();
+
+    // Targeted field updates for Details to avoid overwriting nested docs
+    const detailsDoc = await Details.findOne({ userId: id, userRole: 'staff' });
+    if (detailsDoc) {
+      const setUpdate = { updatedBy: req.user._id };
+      if (email != null) setUpdate['userEmail'] = email;
+      if (name != null) setUpdate['personalInfo.fullName'] = name;
+      if (phone != null) setUpdate['contactInfo.primaryPhone'] = phone;
+      if (position != null) setUpdate['roleSpecificDetails.staffDetails.position'] = position;
+      if (department != null) setUpdate['roleSpecificDetails.staffDetails.department'] = department;
+      if (shift != null) setUpdate['roleSpecificDetails.staffDetails.shift'] = String(shift).toLowerCase();
+      if (experience != null) setUpdate['roleSpecificDetails.staffDetails.experience'] = experience;
+      if (assignedBlock != null && assignedBlock !== '') setUpdate['roleSpecificDetails.staffDetails.assignedBlock'] = assignedBlock;
+
+      // Use findOneAndUpdate with strict:false and omitUndefined to avoid casting errors on other nested paths
+      await Details.findOneAndUpdate(
+        { _id: detailsDoc._id },
+        { $set: setUpdate },
+        { runValidators: false, new: true, strict: false, omitUndefined: true }
+      );
+    }
+
+    return res.json({ success: true, msg: 'Staff updated successfully' });
+  } catch (error) {
+    console.error('Update staff error:', error);
+    return res.status(500).json({ msg: 'Server error', error: error.message });
+  }
+});
+
+// Delete staff member
+router.delete('/staff/:id', requireWarden, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Remove user
+    const user = await User.findById(id);
+    if (!user) {
+      return res.status(404).json({ msg: 'Staff user not found' });
+    }
+
+    await User.deleteOne({ _id: id });
+    await Details.deleteOne({ userId: id, userRole: 'staff' });
+
+    return res.json({ success: true, msg: 'Staff deleted successfully' });
+  } catch (error) {
+    console.error('Delete staff error:', error);
+    return res.status(500).json({ msg: 'Server error', error: error.message });
   }
 });
 
@@ -747,11 +888,11 @@ router.put('/leave-requests/:requestId/reject', requireWarden, async (req, res) 
 // ===== INMATES MANAGEMENT =====
 
 // Add new prisoner with photo upload
-router.post('/prisoners', requireWarden, uploadPrisonerPhoto, handleUploadError, async (req, res) => {
+router.post('/prisoners', requireWarden, uploadPrisonerFiles, handleUploadError, async (req, res) => {
   try {
     console.log('📝 POST /prisoners called by warden');
     console.log('📝 Request data:', req.body);
-    console.log('📝 Uploaded file:', req.file);
+    console.log('📝 Uploaded files:', req.files);
 
     const {
       firstName,
@@ -789,8 +930,8 @@ router.post('/prisoners', requireWarden, uploadPrisonerPhoto, handleUploadError,
 
     // Handle photo upload
     let photographPath = null;
-    if (req.file) {
-      photographPath = `/uploads/prisoner-photos/${req.file.filename}`;
+    if (req.files && req.files.photograph && req.files.photograph[0]) {
+      photographPath = `/uploads/prisoner-photos/${req.files.photograph[0].filename}`;
     }
 
     const prisoner = new Prisoner({
@@ -871,7 +1012,7 @@ router.post('/prisoners', requireWarden, uploadPrisonerPhoto, handleUploadError,
       message: error.message,
       stack: error.stack,
       body: req.body,
-      file: req.file
+      files: req.files
     });
     res.status(500).json({
       success: false,

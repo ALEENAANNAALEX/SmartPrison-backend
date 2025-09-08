@@ -111,7 +111,7 @@ const prisonRulesSchema = new mongoose.Schema({
   title: { type: String, required: true },
   category: {
     type: String,
-    enum: ['conduct', 'safety', 'hygiene', 'work', 'education', 'recreation', 'medical', 'general'],
+    enum: ['conduct', 'safety', 'security', 'hygiene', 'work', 'education', 'recreation', 'medical', 'general'],
     required: true
   },
   

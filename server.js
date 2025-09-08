@@ -24,9 +24,13 @@ mongoose.connect('mongodb://localhost:27017/mern_prison', {
 // Routes
 const adminRoutes = require('./routes/admin');
 const userRoutes = require('./routes/user');
+const wardenRoutes = require('./routes/warden');
+const visitRoutes = require('./routes/visit');
 app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/user', userRoutes);
+app.use('/api/warden', wardenRoutes);
+app.use('/api/visits', visitRoutes);
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));

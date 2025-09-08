@@ -17,6 +17,7 @@ const prisonerSchema = new mongoose.Schema({
   hairColor: { type: String },
   distinguishingMarks: [{ type: String }],
   photograph: { type: String }, // URL to photo
+  governmentId: { type: String }, // URL to uploaded government ID (image or PDF)
   
   // Contact Information
   address: {
@@ -27,12 +28,21 @@ const prisonerSchema = new mongoose.Schema({
     country: { type: String, default: 'India' }
   },
   
+  // Primary emergency contact (kept for backward compatibility)
   emergencyContact: {
     name: { type: String },
     relationship: { type: String },
     phone: { type: String },
     address: { type: String }
   },
+
+  // Multiple emergency contacts support
+  emergencyContacts: [{
+    name: { type: String, required: true },
+    relationship: { type: String },
+    phone: { type: String },
+    address: { type: String }
+  }],
   
   // Legal Information
   charges: [{

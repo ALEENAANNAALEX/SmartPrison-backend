@@ -9,6 +9,9 @@ const prisonBlockSchema = new mongoose.Schema({
   totalCapacity: { type: Number, required: true },
   currentOccupancy: { type: Number, default: 0 },
   
+  // Cells count (replaces floor/wing in UI)
+  cells: { type: Number },
+  
   // Security and classification
   securityLevel: {
     type: String,

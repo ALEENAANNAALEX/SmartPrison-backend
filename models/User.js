@@ -95,4 +95,16 @@ const userSchema = new mongoose.Schema({
   lastLogin: { type: Date, default: Date.now }
 });
 
+// Hash password before saving, if it was set/changed
+userSchema.pre('save', async function(next) {
+  try {
+    if (!this.isModified('password') || !this.password) return next();
+    const bcrypt = require('bcryptjs');
+    this.password = await bcrypt.hash(this.password, 10);
+    next();
+  } catch (err) {
+    next(err);
+  }
+});
+
 module.exports = mongoose.model('User', userSchema);

@@ -156,14 +156,12 @@ router.post('/register', async (req, res) => {
     let user = await User.findOne({ email });
     if (user) return res.status(400).json({ msg: 'User already exists' });
 
-    const salt = await bcrypt.genSalt(10);
-    const hashedPassword = await bcrypt.hash(password, salt);
-
+    // Do NOT hash here; the User model's pre-save hook will hash automatically
     user = new User({
       name,
       email,
-      password: hashedPassword,
-      role: 'user' // Set default role as 'user' for regular registration
+      password, // plaintext here; will be hashed in User model pre-save
+      role: 'visitor' // Set default role as 'visitor' for regular registration
     });
     await user.save();
 
@@ -264,7 +262,7 @@ router.post('/sync-oauth-user', async (req, res) => {
         profilePicture: profilePicture,
         emailVerified: emailVerified,
         phoneNumber: phoneNumber,
-        role: 'user', // Set default role as 'user' for OAuth registration
+        role: 'visitor', // Set default role as 'visitor' for OAuth registration
         lastLogin: new Date()
       });
 
@@ -367,8 +365,17 @@ router.post('/login', async (req, res) => {
       return res.status(400).json({ msg: 'Please provide email and password' });
     }
 
-    const user = await User.findOne({ email });
-    if (!user) return res.status(400).json({ msg: 'Invalid credentials' });
+    // Use case-insensitive email lookup to avoid casing issues
+    const normalizedEmail = String(email).trim();
+    const user = await User.findOne({ email: { $regex: `^${normalizedEmail}$`, $options: 'i' } });
+    if (!user) {
+      console.log('Login: user not found for email', normalizedEmail);
+      return res.status(400).json({ msg: 'Invalid credentials' });
+    }
+    if (!user.password) {
+      console.log('Login: user has no local password (likely OAuth-only)', user.email, user.authProvider);
+      return res.status(400).json({ msg: 'Invalid credentials' });
+    }
 
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) return res.status(400).json({ msg: 'Invalid credentials' });
@@ -486,12 +493,8 @@ router.post('/reset-password/:token', async (req, res) => {
       return res.status(400).json({ msg: 'Invalid or expired reset token' });
     }
 
-    // Hash new password
-    const salt = await bcrypt.genSalt(10);
-    const hashedPassword = await bcrypt.hash(password, salt);
-
-    // Update user password and clear reset token
-    user.password = hashedPassword;
+    // Update user password in plaintext; User model pre-save hook will hash it
+    user.password = password;
     user.resetPasswordToken = undefined;
     user.resetPasswordExpires = undefined;
     await user.save();

@@ -119,6 +119,24 @@ const detailsSchema = new mongoose.Schema({
         certificateUrl: String
       }]
     },
+
+    // For Staff
+    staffDetails: {
+      employeeId: String,
+      position: String,
+      department: String,
+      shift: {
+        type: String,
+        enum: ['day', 'evening', 'night', 'rotating'],
+        default: 'day'
+      },
+      experience: String,
+      assignedBlock: { type: mongoose.Schema.Types.ObjectId, ref: 'PrisonBlock' },
+      joiningDate: Date,
+      salary: Number,
+      qualifications: [String],
+      certifications: [String]
+    },
     
     // For Visitors
     visitorDetails: {

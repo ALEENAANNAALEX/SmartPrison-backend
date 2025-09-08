@@ -38,9 +38,9 @@ async function checkAndFixAdminPassword() {
       
       if (!passwordFound) {
         console.log('❌ Password not found in common passwords');
-        console.log('🔧 Setting password to "admin123"...');
+        console.log('🔧 Setting password to "admin@123"...');
         
-        const hashedPassword = await bcrypt.hash('admin123', 10);
+        const hashedPassword = await bcrypt.hash('admin@123', 10);
         await users.updateOne(
           { email: 'admin@prison.gov' },
           { $set: { password: hashedPassword } }
@@ -49,7 +49,7 @@ async function checkAndFixAdminPassword() {
         console.log('✅ Password updated successfully!');
         console.log('🎯 Login credentials for admin@prison.gov:');
         console.log('📧 Email: admin@prison.gov');
-        console.log('🔑 Password: admin123');
+        console.log('🔑 Password: admin@123');
       }
     } else {
       console.log('❌ admin@prison.gov account not found');
