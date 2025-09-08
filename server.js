@@ -14,7 +14,8 @@ app.use(express.json());
 app.use('/uploads', express.static('uploads'));
 
 // MongoDB connection
-mongoose.connect('mongodb://localhost:27017/mern_prison', {
+const mongoUri = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/mern_prison';
+mongoose.connect(mongoUri, {
   useNewUrlParser: true,
   useUnifiedTopology: true,
 })
