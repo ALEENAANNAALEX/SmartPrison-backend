@@ -65,8 +65,8 @@ router.get('/profile', requireAuth, async (req, res) => {
     console.log('📖 Profile GET request received');
     console.log('👤 User ID:', req.user.id);
 
-    // Get user basic info
-    const user = await User.findById(req.user.id).select('-password');
+    // Get user basic info with timeout
+    const user = await User.findById(req.user.id).select('-password').maxTimeMS(10000);
     console.log('👤 User found:', user ? 'Yes' : 'No');
     if (user) {
       console.log('📋 User data:', {
@@ -81,31 +81,36 @@ router.get('/profile', requireAuth, async (req, res) => {
       return res.status(404).json({ msg: 'User not found' });
     }
 
-    // Get user details from Details collection
-    let details = await Details.findByUserId(req.user.id);
+    // Get user details from Details collection with timeout
+    let details = await Details.findOne({ userId: req.user.id, isActive: true }).maxTimeMS(10000);
 
     // If no details exist, create a basic details record
     if (!details) {
-
-      details = new Details({
-        userId: req.user.id,
-        userRole: user.role || 'visitor',
-        userEmail: user.email,
-        personalInfo: {
-          fullName: user.name,
-          profilePicture: user.profilePicture
-        },
-        contactInfo: {
-          primaryPhone: user.phoneNumber,
-          email: user.email,
-          address: {
-            street: user.address || ''
-          }
-        },
-        createdBy: req.user.id,
-        isActive: true
-      });
-      await details.save();
+      try {
+        details = new Details({
+          userId: req.user.id,
+          userRole: user.role || 'visitor',
+          userEmail: user.email,
+          personalInfo: {
+            fullName: user.name,
+            profilePicture: user.profilePicture
+          },
+          contactInfo: {
+            primaryPhone: user.phoneNumber,
+            email: user.email,
+            address: {
+              street: user.address || ''
+            }
+          },
+          createdBy: req.user.id,
+          isActive: true
+        });
+        await details.save();
+      } catch (detailsError) {
+        console.error('Error creating user details:', detailsError);
+        // Continue without details if creation fails
+        details = null;
+      }
     }
 
     res.json({
@@ -124,7 +129,10 @@ router.get('/profile', requireAuth, async (req, res) => {
       details: details
     });
   } catch (error) {
-
+    console.error('Error fetching user profile:', error);
+    if (error.name === 'MongooseTimeoutError') {
+      return res.status(504).json({ msg: 'Database operation timed out', error: 'Request took too long to process' });
+    }
     res.status(500).json({ msg: 'Server error', error: error.message });
   }
 });

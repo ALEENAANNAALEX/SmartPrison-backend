@@ -34,11 +34,11 @@ const leaveRequestSchema = new mongoose.Schema({
   },
   emergencyContact: {
     type: String,
-    required: true
+    default: ''
   },
   coverageArrangement: {
     type: String,
-    required: true
+    default: ''
   },
   additionalNotes: {
     type: String,

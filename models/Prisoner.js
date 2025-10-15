@@ -19,6 +19,28 @@ const prisonerSchema = new mongoose.Schema({
   photograph: { type: String }, // URL to photo
   governmentId: { type: String }, // URL to uploaded government ID (image or PDF)
   
+  // Government Validation
+  governmentValidation: {
+    isVerified: { type: Boolean, default: false },
+    verifiedAt: { type: Date },
+    verifiedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    discrepancies: [{
+      field: { type: String, required: true }, // 'name', 'dateOfBirth', 'gender', etc.
+      providedValue: { type: String, required: true },
+      governmentValue: { type: String, required: true },
+      severity: { type: String, enum: ['minor', 'major', 'critical'], default: 'minor' },
+      notes: { type: String }
+    }],
+    validationStatus: { 
+      type: String, 
+      enum: ['pending', 'verified', 'discrepancies_found', 'override_approved'], 
+      default: 'pending' 
+    },
+    overrideReason: { type: String },
+    overrideApprovedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    overrideApprovedAt: { type: Date }
+  },
+  
   // Contact Information
   address: {
     street: { type: String },
@@ -33,7 +55,8 @@ const prisonerSchema = new mongoose.Schema({
     name: { type: String },
     relationship: { type: String },
     phone: { type: String },
-    address: { type: String }
+    address: { type: String },
+    governmentId: { type: String } // URL to uploaded government ID file
   },
 
   // Multiple emergency contacts support
@@ -41,7 +64,8 @@ const prisonerSchema = new mongoose.Schema({
     name: { type: String, required: true },
     relationship: { type: String },
     phone: { type: String },
-    address: { type: String }
+    address: { type: String },
+    governmentId: { type: String } // URL to uploaded government ID file
   }],
   
   // Legal Information

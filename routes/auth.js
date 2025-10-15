@@ -253,6 +253,14 @@ router.post('/sync-oauth-user', async (req, res) => {
       console.log('✅ Updated existing user with Supabase data');
     } else {
       // Create new user with complete Supabase data
+      // IMPORTANT: Check if this email belongs to an existing staff/warden in the system
+      const existingStaff = await User.findOne({ 
+        email: supabaseUser.email,
+        role: { $in: ['staff', 'warden', 'admin'] }
+      });
+      
+      const defaultRole = existingStaff ? existingStaff.role : 'visitor';
+      
       user = new User({
         name: fullName,
         email: supabaseUser.email,
@@ -262,12 +270,12 @@ router.post('/sync-oauth-user', async (req, res) => {
         profilePicture: profilePicture,
         emailVerified: emailVerified,
         phoneNumber: phoneNumber,
-        role: 'visitor', // Set default role as 'visitor' for OAuth registration
+        role: defaultRole, // Use existing role if found, otherwise 'visitor'
         lastLogin: new Date()
       });
 
       await user.save();
-      console.log('✅ Created new user with Supabase data');
+      console.log(`✅ Created new user with Supabase data (role: ${defaultRole})`);
     }
 
     // Generate JWT token for the user

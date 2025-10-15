@@ -36,7 +36,7 @@ const storage = multer.diskStorage({
       cb(null, bulkDir);
     } else if (file.fieldname === 'photos' || file.fieldname === 'photograph') {
       cb(null, prisonerPhotosDir);
-    } else if (file.fieldname === 'governmentId') {
+    } else if (file.fieldname === 'governmentId' || file.fieldname.startsWith('emergencyContactGovernmentId_')) {
       cb(null, prisonerDocsDir);
     } else if (file.fieldname === 'profileImage' || file.fieldname === 'staffImage') {
       cb(null, profilesDir);
@@ -53,7 +53,7 @@ const storage = multer.diskStorage({
       base = 'bulk_';
     } else if (file.fieldname === 'profileImage' || file.fieldname === 'staffImage') {
       base = 'profile_';
-    } else if (file.fieldname === 'governmentId') {
+    } else if (file.fieldname === 'governmentId' || file.fieldname.startsWith('emergencyContactGovernmentId_')) {
       base = 'govid_';
     }
     cb(null, base + uniqueSuffix + ext);
@@ -63,7 +63,7 @@ const storage = multer.diskStorage({
 // File filter to allow images and CSV/XLSX (for bulk)
 const fileFilter = (req, file, cb) => {
   const isImage = file.mimetype.startsWith('image/');
-  const isGovId = file.fieldname === 'governmentId' && (
+  const isGovId = (file.fieldname === 'governmentId' || file.fieldname.startsWith('emergencyContactGovernmentId_')) && (
     file.mimetype === 'application/pdf' || isImage
   );
   const isSpreadsheet = file.fieldname === 'csvFile' && (
@@ -88,10 +88,15 @@ const upload = multer({
   }
 });
 
-// Middleware for prisoner file uploads (photo + governmentId)
+// Middleware for prisoner file uploads (photo + governmentId + emergency contact government IDs)
 const uploadPrisonerFiles = upload.fields([
   { name: 'photograph', maxCount: 1 },
-  { name: 'governmentId', maxCount: 1 }
+  { name: 'governmentId', maxCount: 1 },
+  { name: 'emergencyContactGovernmentId_0', maxCount: 1 },
+  { name: 'emergencyContactGovernmentId_1', maxCount: 1 },
+  { name: 'emergencyContactGovernmentId_2', maxCount: 1 },
+  { name: 'emergencyContactGovernmentId_3', maxCount: 1 },
+  { name: 'emergencyContactGovernmentId_4', maxCount: 1 }
 ]);
 
 // Middleware for staff profile image upload
